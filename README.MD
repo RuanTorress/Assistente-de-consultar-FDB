@@ -163,9 +163,10 @@ Testa múltiplas formas de conexão (porta 4050/3050, DSN, embedded) e retorna a
 ### 2. Chat com Execução Real (multi API)
 
 ```bash
-python main_central.py
+python main_menu.py
 ```
 Comandos úteis no chat:
+
 - `trocar` → alterna OpenAI/Gemini
 - `sair` → finaliza
 
