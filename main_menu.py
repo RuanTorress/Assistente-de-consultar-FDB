@@ -814,608 +814,555 @@ def print_tabela_bonita(rows, max_rows=20):
 # =========================
 # 10. BOT (MODO SUGESTÕES MELHORADO)
 # =========================
-
 def modo_bot():
-    print("\n🤖 MODO BOT (Navegação Hierárquica Inteligente)")
-    print("Explore suas tabelas de forma organizada e progressiva!")
+    """🤖 Bot inteligente com navegação hierárquica, busca e JOIN automático"""
+    print("\n🤖 MODO BOT (Navegação e Busca Inteligente)")
+    print("Explore suas tabelas passo a passo, busque termos e relacione dados sem voltar ao início.")
     
-    # Estado da navegação
-    nivel_atual = "inicio"
-    tabela_selecionada = None
-    acao_selecionada = None
-    historico_navegacao = []
-    
-    while True:
-        if nivel_atual == "inicio":
-            opcao = nivel_selecao_tabela()
-            
-            if opcao == "voltar":
+    # Estado com memória simples
+    historico = []
+    tabelas_visitadas = []
+    ultima_tabela = None
+
+    # ---------- Helpers locais ----------
+    def pause(msg="Pressione Enter para continuar..."):
+        try:
+            input(msg)
+        except EOFError:
+            pass
+
+    def listar_categorias():
+        # Categoriza por prefixos/padrões comuns
+        cats = {
+            "👥 CLIENTES": [],
+            "📦 PRODUTOS": [],
+            "💰 VENDAS/PEDIDOS": [],
+            "🌍 LOCALIZAÇÃO": [],
+            "🔐 ACESSO": [],
+            "📊 MOVIMENTO": [],
+            "🏢 COMERCIAL": [],
+            "⚙️ SISTEMA": [],
+            "📋 OUTRAS": [],
+        }
+        for t in sorted(schema_cache.keys()):
+            up = t.upper()
+            if any(x in up for x in ("CLI_", "CLIENTE")):
+                cats["👥 CLIENTES"].append(t)
+            elif any(x in up for x in ("PRO_", "PRODUTO")):
+                cats["📦 PRODUTOS"].append(t)
+            elif any(x in up for x in ("VND_", "VENDA", "PEDIDO")):
+                cats["💰 VENDAS/PEDIDOS"].append(t)
+            elif any(x in up for x in ("LOC_", "CIDADE", "UF", "REGIAO", "BAIRRO")):
+                cats["🌍 LOCALIZAÇÃO"].append(t)
+            elif any(x in up for x in ("ACE_", "USUARIO", "PERFIL")):
+                cats["🔐 ACESSO"].append(t)
+            elif any(x in up for x in ("MOV_", "GIRO", "ESTOQUE")):
+                cats["📊 MOVIMENTO"].append(t)
+            elif any(x in up for x in ("COM_", "OC_", "SC_")):
+                cats["🏢 COMERCIAL"].append(t)
+            elif any(x in up for x in ("SYS_", "SISTEMA", "CONFIG", "PARAM")):
+                cats["⚙️ SISTEMA"].append(t)
+            else:
+                cats["📋 OUTRAS"].append(t)
+        return cats
+
+    def escolher_tabela():
+        print("\n" + "="*80)
+        print("📋 Selecione uma tabela para explorar, ou pesquise por nome.")
+        print("="*80)
+
+        if not schema_cache:
+            print("❌ Nenhuma tabela carregada. Use 'Recarregar schema' no menu principal.")
+            pause()
+            return None
+
+        # Tabelas recentes
+        if tabelas_visitadas:
+            print("🕒 Recentes:")
+            for i, t in enumerate(tabelas_visitadas[-5:], 1):
+                print(f"  R{i}. {t} ({len(schema_cache[t])} campos)")
+            print("-"*80)
+
+        # Mostrar por categorias com numeração contínua
+        opcoes = []
+        idx = 1
+        for titulo, lista in listar_categorias().items():
+            if not lista:
+                continue
+            print(f"{titulo} ({len(lista)}):")
+            for t in lista:
+                rels = [fk for fk in foreign_keys if fk['from_table'] == t or fk['to_table'] == t]
+                mark = " 🔗" if len(rels) >= 5 else ""
+                print(f"  {idx:2d}. {t} ({len(schema_cache[t])} campos, {len(rels)} rels){mark}")
+                opcoes.append(t)
+                idx += 1
+            print()
+
+        print("Comandos:")
+        print("  • Número da tabela (ex: 12)")
+        print("  • Nome parcial/total (ex: CLI_CLIENTE ou CLIENTE)")
+        print("  • 'R1', 'R2'... para recentes")
+        print("  • 'buscar termo' para filtrar por nome (ex: buscar cidade)")
+        print("  • 'trocar' (IA), 'voltar' (menu principal), 'sair'")
+        ent = input("\nEscolha: ").strip()
+
+        if ent.lower() in ("voltar", "menu"):
+            return "voltar"
+        if ent.lower() == "sair":
+            print("👋 Encerrando...")
+            exit(0)
+        if ent.lower() == "trocar":
+            trocar_api()
+            return None
+
+        if ent.upper().startswith("R") and ent[1:].isdigit():
+            ridx = int(ent[1:]) - 1
+            recentes = tabelas_visitadas[-5:]
+            if 0 <= ridx < len(recentes):
+                return recentes[ridx]
+
+        if ent.lower().startswith("buscar "):
+            termo = ent[7:].strip().upper()
+            matches = [t for t in schema_cache.keys() if termo in t.upper()]
+            if not matches:
+                print("⚠️ Nenhuma tabela encontrada.")
+                pause()
+                return None
+            print("\n🔎 Resultado da busca:")
+            for i, t in enumerate(matches, 1):
+                print(f"  {i:2d}. {t} ({len(schema_cache[t])} campos)")
+            s = input("Número para selecionar ou Enter para cancelar: ").strip()
+            if s.isdigit():
+                i = int(s) - 1
+                if 0 <= i < len(matches):
+                    return matches[i]
+            return None
+
+        if ent.isdigit():
+            i = int(ent) - 1
+            if 0 <= i < len(opcoes):
+                return opcoes[i]
+
+        # Nome parcial
+        up = ent.upper()
+        candidatos = [t for t in schema_cache.keys() if up in t.upper()]
+        if len(candidatos) == 1:
+            return candidatos[0]
+        elif len(candidatos) > 1:
+            print("\nVárias tabelas encontradas:")
+            for i, t in enumerate(candidatos, 1):
+                print(f"  {i}. {t}")
+            s = input("Escolha uma (número): ").strip()
+            if s.isdigit():
+                i = int(s) - 1
+                if 0 <= i < len(candidatos):
+                    return candidatos[i]
+        else:
+            print("⚠️ Tabela não encontrada.")
+            pause()
+
+        return None
+
+    def ver_estrutura(tabela):
+        campos = schema_cache.get(tabela, [])
+        print("\n📋 Estrutura da tabela:", tabela)
+        print(f"Total de campos: {len(campos)}")
+        for i, c in enumerate(campos, 1):
+            print(f"  {i:2d}. {c}")
+        # Relacionamentos
+        rels = [fk for fk in foreign_keys if fk['from_table'] == tabela or fk['to_table'] == tabela]
+        print(f"\n🔗 Relacionamentos ({len(rels)}):")
+        if rels:
+            for fk in rels:
+                print(f"  • {fk['from_table']}.{fk['from_field']} → {fk['to_table']}.{fk['to_field']}")
+        else:
+            print("  (nenhum)")
+        pause()
+
+    def contar_registros(tabela):
+        if not conectado:
+            print("❌ Sem conexão.")
+            pause()
+            return
+        try:
+            cur.execute(f"SELECT COUNT(*) FROM {tabela}")
+            total = cur.fetchone()[0]
+            print(f"📊 Total de registros em {tabela}: {total:,}")
+        except Exception as e:
+            print(f"❌ Erro ao contar: {e}")
+        pause()
+
+    def mostrar_dados(tabela):
+        print("\n👀 Quantos registros mostrar?")
+        print("  1. 5  |  2. 10  |  3. 20  |  4. Personalizado")
+        ent = input("Escolha (1-4): ").strip()
+        limite = 10
+        if ent == "1":
+            limite = 5
+        elif ent == "2":
+            limite = 10
+        elif ent == "3":
+            limite = 20
+        elif ent == "4":
+            try:
+                limite = max(1, int(input("Quantidade: ").strip()))
+            except:
+                limite = 10
+        sql = f"SELECT FIRST {limite} * FROM {tabela}"
+        if not conectado:
+            print("📋 SQL:", sql)
+            pause()
+            return
+        ok, rows = executar_sql(sql)
+        if ok and rows:
+            print_tabela_bonita(rows, limite)
+        elif ok:
+            print("✅ Executado, sem registros.")
+        else:
+            print("❌ Erro ao executar.")
+        pause()
+
+    def parse_campos(tabela, entrada):
+        # retorna lista de campos válidos com base em números, listas, nomes parciais ou 'todos'
+        campos = schema_cache.get(tabela, [])
+        if not campos:
+            return []
+        e = entrada.strip()
+        if e.lower() == "todos":
+            return campos[:15]
+        selec = []
+        # range  ex: 3-7
+        if "-" in e and all(x.strip().isdigit() for x in e.split("-")):
+            a, b = e.split("-")
+            a, b = int(a) - 1, int(b) - 1
+            for i in range(min(a, b), max(a, b) + 1):
+                if 0 <= i < len(campos):
+                    selec.append(campos[i])
+        # números separados por vírgula
+        elif "," in e and all(x.strip().isdigit() for x in e.split(",")):
+            idxs = [int(x.strip()) - 1 for x in e.split(",")]
+            for i in idxs:
+                if 0 <= i < len(campos):
+                    selec.append(campos[i])
+        # número único
+        elif e.isdigit():
+            i = int(e) - 1
+            if 0 <= i < len(campos):
+                selec.append(campos[i])
+        else:
+            # nomes (podem ser múltiplos separados por vírgula/espaço)
+            nomes = [x.strip().upper() for x in e.replace(",", " ").split() if x.strip()]
+            for c in campos:
+                up = c.upper()
+                if any(n in up for n in nomes):
+                    selec.append(c)
+        # remover duplicatas preservando ordem
+        uniq = []
+        for c in selec:
+            if c not in uniq:
+                uniq.append(c)
+        return uniq[:10]  # limitar para não estourar largura
+
+    def campos_especificos(tabela):
+        campos = schema_cache.get(tabela, [])
+        if not campos:
+            print("❌ Tabela sem campos.")
+            pause()
+            return
+        print(f"\n🎯 Campos em {tabela}:")
+        for i, c in enumerate(campos, 1):
+            print(f"  {i:2d}. {c}")
+        print("\nDicas:")
+        print("  • números: 1,3,5  |  faixa: 2-6  |  nomes/parte: NOME, CNPJ")
+        print("  • 'todos' para primeiros 15 campos")
+        e = input("Quais campos explorar? ").strip()
+        sel = parse_campos(tabela, e)
+        if not sel:
+            print("⚠️ Nenhum campo válido selecionado.")
+            pause()
+            return
+        sql = f"SELECT FIRST 15 {', '.join(sel)} FROM {tabela}"
+        if not conectado:
+            print("📋 SQL:", sql)
+            pause()
+            return
+        ok, rows = executar_sql(sql)
+        if ok and rows:
+            print_tabela_bonita(rows, 15)
+        elif ok:
+            print("✅ Executado, sem registros.")
+        else:
+            print("❌ Erro ao executar.")
+        pause()
+
+    def valores_unicos(tabela):
+        campos = schema_cache.get(tabela, [])
+        if not campos:
+            print("❌ Tabela sem campos.")
+            pause()
+            return
+        print(f"\n🏷️ Escolha um campo para ver valores únicos de {tabela}:")
+        for i, c in enumerate(campos, 1):
+            print(f"  {i:2d}. {c}")
+        e = input("Campo (número ou nome): ").strip()
+        sel = parse_campos(tabela, e)
+        if not sel:
+            print("⚠️ Campo inválido.")
+            pause()
+            return
+        campo = sel[0]
+        # Tentar usar cache de distintos (já existe no seu código)
+        valores = carregar_valores_distintos(tabela, campo, limite=20) or []
+        if valores:
+            print(f"\n🏷️ {len(valores)} valores (mostrando até 20) de {campo}:")
+            for i, v in enumerate(valores, 1):
+                print(f"  {i:2d}. {v}")
+            ch = input("\nFiltrar por um destes valores? (número/valor/Enter): ").strip()
+            if not ch:
+                pause()
                 return
-            elif opcao == "sair":
+            # montar filtro
+            if ch.isdigit():
+                i = int(ch) - 1
+                if 0 <= i < len(valores):
+                    val = valores[i]
+                else:
+                    val = None
+            else:
+                val = ch
+            if val is None:
+                pause()
+                return
+            # heurística: tratar como numérico se só dígitos e campo parece ID/NR
+            is_num = val.isdigit() and (campo.upper().startswith("ID") or campo.upper().startswith("NR") or campo.upper().endswith("_ID"))
+            if is_num:
+                sql = f"SELECT FIRST 15 * FROM {tabela} WHERE {campo} = {val}"
+            else:
+                sql = f"SELECT FIRST 15 * FROM {tabela} WHERE UPPER({campo}) LIKE '%{str(val).upper()}%'"
+            if not conectado:
+                print("📋 SQL:", sql)
+                pause()
+                return
+            ok, rows = executar_sql(sql)
+            if ok and rows:
+                print_tabela_bonita(rows, 15)
+            elif ok:
+                print("✅ Executado, sem registros.")
+            else:
+                print("❌ Erro ao executar.")
+            pause()
+        else:
+            # fallback direto no banco
+            sql = f"SELECT DISTINCT FIRST 20 {campo} FROM {tabela} WHERE {campo} IS NOT NULL ORDER BY {campo}"
+            if not conectado:
+                print("📋 SQL:", sql)
+                pause()
+                return
+            ok, rows = executar_sql(sql)
+            if ok and rows:
+                for i, r in enumerate(rows, 1):
+                    print(f"  {i:2d}. {r[0]}")
+            elif ok:
+                print("✅ Sem valores distintos.")
+            else:
+                print("❌ Erro ao executar.")
+            pause()
+
+    def filtros_personalizados(tabela):
+        campos = schema_cache.get(tabela, [])
+        if not campos:
+            print("❌ Tabela sem campos.")
+            pause()
+            return
+        # gerar exemplos a partir de campos reais
+        exemplos = []
+        for c in campos[:10]:
+            u = c.upper()
+            if u.startswith("ID") or u.endswith("_ID"):
+                exemplos += [f"{c} = 1", f"{c} > 0"]
+            elif any(x in u for x in ("NM_", "NOME", "RAZAO", "FANTASIA", "DESCR")):
+                exemplos += [f"{c} LIKE '%FARMACIA%'", f"UPPER({c}) LIKE '%SILVA%'"]
+            elif u.startswith("NR") or "FONE" in u or "CNPJ" in u or "CEP" in u:
+                exemplos += [f"{c} IS NOT NULL", f"LENGTH({c}) >= 8"]
+            elif u.startswith("DT") or "DATA" in u:
+                exemplos += [f"{c} >= '2024-01-01'", f"{c} IS NOT NULL"]
+            elif u.startswith("FG") or "FLAG" in u or "STATUS" in u:
+                exemplos += [f"{c} = 'S'", f"{c} = 'N'"]
+        print("\n🔍 Exemplos de filtros (sem WHERE):")
+        for i, ex in enumerate(exemplos[:8], 1):
+            print(f"  {i}. {ex}")
+        filtro = input("\nDigite o filtro WHERE (sem 'WHERE'): ").strip()
+        if not filtro:
+            return
+        sql = f"SELECT FIRST 15 * FROM {tabela} WHERE {filtro}"
+        if not conectado:
+            print("📋 SQL:", sql)
+            pause()
+            return
+        ok, rows = executar_sql(sql)
+        if ok and rows:
+            print_tabela_bonita(rows, 15)
+        elif ok:
+            print("✅ Nenhum registro encontrado.")
+        else:
+            print("❌ Erro no filtro. Verifique nomes de campos reais (veja 'Ver estrutura').")
+        pause()
+
+    def explorar_relacionamentos(tabela):
+        rels = [fk for fk in foreign_keys if fk['from_table'] == tabela or fk['to_table'] == tabela]
+        if not rels:
+            print("❌ Nenhum relacionamento para esta tabela.")
+            pause()
+            return
+        print(f"\n🔗 Relacionamentos de {tabela}:")
+        for i, fk in enumerate(rels, 1):
+            if fk['from_table'] == tabela:
+                print(f"  {i:2d}. {tabela}.{fk['from_field']} → {fk['to_table']}.{fk['to_field']}")
+            else:
+                print(f"  {i:2d}. {fk['from_table']}.{fk['from_field']} → {tabela}.{fk['to_field']}")
+        s = input("Escolha um relacionamento (número) ou Enter para cancelar: ").strip()
+        if not s.isdigit():
+            return
+        i = int(s) - 1
+        if not (0 <= i < len(rels)):
+            return
+        fk = rels[i]
+        if fk['from_table'] == tabela:
+            sql = (
+                f"SELECT FIRST 15 a.{fk['from_field']}, b.* "
+                f"FROM {fk['from_table']} a JOIN {fk['to_table']} b "
+                f"ON a.{fk['from_field']} = b.{fk['to_field']}"
+            )
+        else:
+            sql = (
+                f"SELECT FIRST 15 b.{fk['to_field']}, a.* "
+                f"FROM {fk['from_table']} a JOIN {fk['to_table']} b "
+                f"ON a.{fk['from_field']} = b.{fk['to_field']}"
+            )
+        if not conectado:
+            print("📋 SQL:", sql)
+            pause()
+            return
+        ok, rows = executar_sql(sql)
+        if ok and rows:
+            print_tabela_bonita(rows, 15)
+        elif ok:
+            print("✅ Sem registros relacionados.")
+        else:
+            print("❌ Erro no JOIN.")
+        pause()
+
+    def buscar_nesta_tabela(tabela):
+        termo = input("🔎 Termo de busca (em campos de texto): ").strip()
+        if not termo:
+            return
+        # focar em prováveis campos de texto
+        campos = schema_cache.get(tabela, [])
+        text_fields = [c for c in campos if any(k in c.upper() for k in ("NM_", "NOME", "RAZAO", "FANTASIA", "DESCR"))]
+        if not text_fields:
+            text_fields = campos[:5]
+        conds = [f"UPPER({c}) LIKE '%{termo.upper()}%'" for c in text_fields]
+        where = " OR ".join(conds) if conds else "1=1"
+        sql = f"SELECT FIRST 15 * FROM {tabela} WHERE {where}"
+        if not conectado:
+            print("📋 SQL:", sql)
+            pause()
+            return
+        ok, rows = executar_sql(sql)
+        if ok and rows:
+            print_tabela_bonita(rows, 15)
+        elif ok:
+            print("✅ Nenhum registro encontrado.")
+        else:
+            print("❌ Erro ao buscar.")
+        pause()
+
+    def pergunta_livre_sql():
+        q = input("\n💬 Pergunte em linguagem natural (IA gera SQL). 'voltar' para sair: ").strip()
+        if not q or q.lower() in ("voltar", "sair"):
+            return
+        sql = gerar_sql(q)
+        print("🔍 SQL gerada:", sql)
+        if not conectado:
+            print("📋 Sem conexão. Execute manualmente no seu cliente.")
+            pause()
+            return
+        ok, rows = executar_sql(sql)
+        if ok and rows:
+            print_tabela_bonita(rows, 25)
+        elif ok:
+            print("✅ Executado, sem registros.")
+        else:
+            print("❌ Erro na execução.")
+        pause()
+
+    def explorar_tabela(tabela):
+        nonlocal ultima_tabela
+        ultima_tabela = tabela
+        if tabela not in tabelas_visitadas:
+            tabelas_visitadas.append(tabela)
+        while True:
+            print("\n" + "="*80)
+            print(f"🔍 Explorando {tabela}")
+            print("="*80)
+            print("Opções:")
+            print("  1. 📋 Ver estrutura")
+            print("  2. 🔢 Contar registros")
+            print("  3. 👀 Mostrar dados")
+            print("  4. 🎯 Campos específicos")
+            print("  5. 🏷️ Valores únicos por campo")
+            print("  6. 🔍 Filtros personalizados")
+            print("  7. 🔗 Relacionamentos (JOIN)")
+            print("  8. 🔎 Buscar nesta tabela (texto)")
+            print("  9. 🤖 Pergunta livre (IA → SQL)")
+            print("  0. 🔙 Trocar de tabela")
+            print("Comandos: número, 'voltar' (menu), 'trocar' (IA), 'sair'")
+            ent = input("Sua escolha: ").strip().lower()
+            if ent in ("voltar", "menu"):
+                return "voltar"
+            if ent == "sair":
+                print("👋 Encerrando...")
                 exit(0)
-            elif opcao == "trocar":
+            if ent == "trocar":
                 trocar_api()
                 continue
-            elif opcao and opcao.upper() in schema_cache:
-                tabela_selecionada = opcao.upper()
-                historico_navegacao.append(f"Tabela: {tabela_selecionada}")
-                nivel_atual = "tabela"
+            if ent == "0":
+                return None
+            if ent == "1":
+                ver_estrutura(tabela)
+            elif ent == "2":
+                contar_registros(tabela)
+            elif ent == "3":
+                mostrar_dados(tabela)
+            elif ent == "4":
+                campos_especificos(tabela)
+            elif ent == "5":
+                valores_unicos(tabela)
+            elif ent == "6":
+                filtros_personalizados(tabela)
+            elif ent == "7":
+                explorar_relacionamentos(tabela)
+            elif ent == "8":
+                buscar_nesta_tabela(tabela)
+            elif ent == "9":
+                pergunta_livre_sql()
             else:
-                print("⚠️ Opção inválida")
-                
-        elif nivel_atual == "tabela":
-            opcao = nivel_exploracao_tabela(tabela_selecionada)
-            
-            if opcao == "voltar":
-                nivel_atual = "inicio"
-                historico_navegacao.pop() if historico_navegacao else None
-                tabela_selecionada = None
-            elif opcao == "inicio":
-                nivel_atual = "inicio"
-                historico_navegacao.clear()
-                tabela_selecionada = None
-            elif opcao:
-                acao_selecionada = opcao
-                historico_navegacao.append(f"Ação: {opcao}")
-                nivel_atual = "acao"
-                
-        elif nivel_atual == "acao":
-            continuar = nivel_detalhamento(tabela_selecionada, acao_selecionada)
-            
-            if not continuar:
-                # Volta para exploração da tabela
-                nivel_atual = "tabela"
-                historico_navegacao.pop() if historico_navegacao else None
-                acao_selecionada = None
+                print("⚠️ Opção inválida.")
 
-def nivel_selecao_tabela():
-    """📋 Nível 1: Seleção de tabela"""
-    print("\n" + "="*70)
-    print("📋 NÍVEL 1: SELEÇÃO DE TABELA")
-    print("="*70)
-    
-    if not schema_cache:
-        print("❌ Nenhuma tabela carregada")
-        return "voltar"
-    
-    # Categorizar tabelas por tipo
-    tabelas_cliente = [t for t in schema_cache.keys() if "CLIENTE" in t or "CLI_" in t]
-    tabelas_produto = [t for t in schema_cache.keys() if "PRODUTO" in t or "PRD_" in t]
-    tabelas_venda = [t for t in schema_cache.keys() if "VENDA" in t or "PEDIDO" in t or "VND_" in t]
-    tabelas_outras = [t for t in schema_cache.keys() if t not in tabelas_cliente + tabelas_produto + tabelas_venda]
-    
-    opcoes = []
-    contador = 1
-    
-    if tabelas_cliente:
-        print(f"\n👥 CLIENTES ({len(tabelas_cliente)} tabelas):")
-        for tabela in tabelas_cliente:
-            print(f"  {contador:2d}. {tabela} ({len(schema_cache[tabela])} campos)")
-            opcoes.append(tabela)
-            contador += 1
-    
-    if tabelas_produto:
-        print(f"\n📦 PRODUTOS ({len(tabelas_produto)} tabelas):")
-        for tabela in tabelas_produto:
-            print(f"  {contador:2d}. {tabela} ({len(schema_cache[tabela])} campos)")
-            opcoes.append(tabela)
-            contador += 1
-    
-    if tabelas_venda:
-        print(f"\n💰 VENDAS/PEDIDOS ({len(tabelas_venda)} tabelas):")
-        for tabela in tabelas_venda:
-            print(f"  {contador:2d}. {tabela} ({len(schema_cache[tabela])} campos)")
-            opcoes.append(tabela)
-            contador += 1
-    
-    if tabelas_outras:
-        print(f"\n📊 OUTRAS ({len(tabelas_outras)} tabelas):")
-        for tabela in tabelas_outras:
-            print(f"  {contador:2d}. {tabela} ({len(schema_cache[tabela])} campos)")
-            opcoes.append(tabela)
-            contador += 1
-    
-    print("\n" + "-"*50)
-    print("💬 Comandos: número da tabela, 'trocar' (IA), 'voltar', 'sair'")
-    
-    entrada = input("\nEscolha uma tabela: ").strip()
-    
-    if entrada.lower() in ("voltar", "trocar", "sair"):
-        return entrada.lower()
-    
-    if entrada.isdigit():
-        idx = int(entrada) - 1
-        if 0 <= idx < len(opcoes):
-            return opcoes[idx]
-    
-    # Busca por nome parcial
-    entrada_upper = entrada.upper()
-    for tabela in opcoes:
-        if entrada_upper in tabela:
-            return tabela
-    
-    return None
+    # ---------- Loop principal ----------
+    while True:
+        # 1) Escolher tabela
+        t = escolher_tabela()
+        if t == "voltar":
+            return
+        if not t:
+            continue
 
-def nivel_exploracao_tabela(tabela):
-    """🔍 Nível 2: Exploração da tabela selecionada"""
-    print("\n" + "="*70)
-    print(f"🔍 NÍVEL 2: EXPLORANDO {tabela}")
-    print("="*70)
-    
-    # Informações básicas da tabela
-    campos = schema_cache.get(tabela, [])
-    relacionamentos = [fk for fk in foreign_keys if fk['from_table'] == tabela or fk['to_table'] == tabela]
-    
-    print(f"📊 Informações: {len(campos)} campos, {len(relacionamentos)} relacionamentos")
-    
-    # Opções disponíveis
-    opcoes = [
-        "ver_estrutura",
-        "contar_registros", 
-        "mostrar_dados",
-        "campos_especificos",
-        "valores_unicos",
-        "filtros_personalizados"
-    ]
-    
-    if relacionamentos:
-        opcoes.append("explorar_relacionamentos")
-    
-    print(f"\n📋 OPÇÕES DISPONÍVEIS:")
-    print(f"  1. 📋 Ver estrutura completa (campos e tipos)")
-    print(f"  2. 🔢 Contar total de registros")
-    print(f"  3. 👀 Mostrar dados (primeiros registros)")
-    print(f"  4. 🎯 Explorar campos específicos")
-    print(f"  5. 🏷️  Ver valores únicos por campo")
-    print(f"  6. 🔍 Aplicar filtros personalizados")
-    
-    if relacionamentos:
-        print(f"  7. 🔗 Explorar relacionamentos ({len(relacionamentos)} encontrados)")
-    
-    print("\n" + "-"*50)
-    print("💬 Comandos: número da opção, 'voltar', 'inicio'")
-    
-    entrada = input(f"\nO que fazer com {tabela}? ").strip()
-    
-    if entrada.lower() in ("voltar", "inicio"):
-        return entrada.lower()
-    
-    if entrada.isdigit():
-        idx = int(entrada) - 1
-        if 0 <= idx < len(opcoes):
-            return opcoes[idx]
-    
-    return None
-
-def nivel_detalhamento(tabela, acao):
-    """⚡ Nível 3: Execução da ação específica"""
-    print(f"\n⚡ EXECUTANDO: {acao.replace('_', ' ').title()} em {tabela}")
-    print("-"*50)
-    
-    if acao == "ver_estrutura":
-        return acao_ver_estrutura(tabela)
-    elif acao == "contar_registros":
-        return acao_contar_registros(tabela)
-    elif acao == "mostrar_dados":
-        return acao_mostrar_dados(tabela)
-    elif acao == "campos_especificos":
-        return acao_campos_especificos(tabela)
-    elif acao == "valores_unicos":
-        return acao_valores_unicos(tabela)
-    elif acao == "filtros_personalizados":
-        return acao_filtros_personalizados(tabela)
-    elif acao == "explorar_relacionamentos":
-        return acao_explorar_relacionamentos(tabela)
-    
-    return False
-
-def acao_ver_estrutura(tabela):
-    """📋 Mostra estrutura completa da tabela"""
-    campos = schema_cache.get(tabela, [])
-    
-    print(f"📋 ESTRUTURA DA TABELA {tabela}:")
-    print(f"Total de campos: {len(campos)}")
-    print("-"*40)
-    
-    for i, campo in enumerate(campos, 1):
-        print(f"  {i:2d}. {campo}")
-    
-    # Sugestões de continuação
-    print(f"\n🎯 PRÓXIMOS PASSOS:")
-    print(f"  1. Ver dados destes campos")
-    print(f"  2. Escolher campos específicos")
-    print(f"  3. Ver valores únicos de um campo")
-    print(f"  4. Voltar às opções da tabela")
-    
-    escolha = input("\nPróximo passo (1-4 ou Enter para voltar): ").strip()
-    
-    if escolha == "1":
-        # Mostrar dados
-        sql = f"SELECT FIRST 10 * FROM {tabela}"
-        executar_e_mostrar(sql)
-    elif escolha == "2":
-        return acao_campos_especificos(tabela)
-    elif escolha == "3":
-        return acao_valores_unicos(tabela)
-    
-    input("\nPressione Enter para continuar...")
-    return False
-
-def acao_contar_registros(tabela):
-    """🔢 Conta registros da tabela"""
-    sql = f"SELECT COUNT(*) AS TOTAL FROM {tabela}"
-    sucesso, rows = executar_sql(sql)
-    
-    if sucesso and rows:
-        total = rows[0][0]
-        print(f"📊 Total de registros em {tabela}: {total:,}")
-        
-        if total > 0:
-            print(f"\n🎯 PRÓXIMOS PASSOS:")
-            print(f"  1. Ver alguns registros")
-            print(f"  2. Aplicar filtros")
-            print(f"  3. Ver campos específicos")
-            
-            escolha = input("\nPróximo passo (1-3 ou Enter para voltar): ").strip()
-            
-            if escolha == "1":
-                return acao_mostrar_dados(tabela)
-            elif escolha == "2":
-                return acao_filtros_personalizados(tabela)
-            elif escolha == "3":
-                return acao_campos_especificos(tabela)
-    else:
-        print("❌ Erro ao contar registros")
-    
-    input("\nPressione Enter para continuar...")
-    return False
-
-def acao_mostrar_dados(tabela):
-    """👀 Mostra dados da tabela"""
-    print(f"👀 Quantos registros mostrar?")
-    print("  1. Primeiros 5")
-    print("  2. Primeiros 10") 
-    print("  3. Primeiros 20")
-    print("  4. Quantidade personalizada")
-    
-    escolha = input("Escolha (1-4): ").strip()
-    
-    limite = 10  # padrão
-    if escolha == "1":
-        limite = 5
-    elif escolha == "2":
-        limite = 10
-    elif escolha == "3":
-        limite = 20
-    elif escolha == "4":
-        try:
-            limite = int(input("Quantos registros? "))
-        except:
-            limite = 10
-    
-    sql = f"SELECT FIRST {limite} * FROM {tabela}"
-    sucesso, rows = executar_sql(sql)
-    
-    if sucesso and rows:
-        print(f"\n📊 Primeiros {len(rows)} registros de {tabela}:")
-        print_tabela_bonita(rows, limite)
-        
-        # Sugestões baseadas nos dados
-        print(f"\n🎯 EXPLORAR MAIS:")
-        print(f"  1. Filtrar por um campo específico")
-        print(f"  2. Ver mais registros")
-        print(f"  3. Explorar relacionamentos")
-        print(f"  4. Ordenar por campo diferente")
-        
-        escolha = input("\nPróximo passo (1-4 ou Enter para voltar): ").strip()
-        
-        if escolha == "1":
-            return acao_filtros_personalizados(tabela)
-        elif escolha == "2":
-            return acao_mostrar_dados(tabela)  # Recursivo para nova quantidade
-        elif escolha == "3":
-            return acao_explorar_relacionamentos(tabela)
-    else:
-        print("❌ Erro ao buscar dados")
-    
-    input("\nPressione Enter para continuar...")
-    return False
-
-def acao_campos_especificos(tabela):
-    """🎯 Explora campos específicos"""
-    campos = schema_cache.get(tabela, [])
-    
-    print(f"🎯 CAMPOS DISPONÍVEIS EM {tabela}:")
-    for i, campo in enumerate(campos, 1):
-        print(f"  {i:2d}. {campo}")
-    
-    print(f"\n💡 Você pode:")
-    print(f"  • Digitar números separados por vírgula (ex: 1,3,5)")
-    print(f"  • Digitar nomes de campos (ex: nome,cidade)")
-    print(f"  • Digite 'todos' para ver todos os campos")
-    
-    entrada = input("\nQuais campos explorar? ").strip()
-    
-    if entrada.lower() == "todos":
-        campos_selecionados = campos
-    else:
-        campos_selecionados = []
-        
-        # Tentar interpretar números
-        if "," in entrada:
-            try:
-                indices = [int(x.strip()) - 1 for x in entrada.split(",")]
-                campos_selecionados = [campos[i] for i in indices if 0 <= i < len(campos)]
-            except:
-                pass
-        
-        # Tentar interpretar nomes
-        if not campos_selecionados:
-            nomes = [x.strip().upper() for x in entrada.replace(",", " ").split()]
-            campos_selecionados = [c for c in campos if any(nome in c.upper() for nome in nomes)]
-    
-    if campos_selecionados:
-        campos_str = ", ".join(campos_selecionados[:10])  # Limitar para não quebrar SQL
-        sql = f"SELECT FIRST 15 {campos_str} FROM {tabela}"
-        
-        print(f"\n📊 Mostrando campos: {campos_str}")
-        sucesso, rows = executar_sql(sql)
-        
-        if sucesso and rows:
-            print_tabela_bonita(rows, 15)
-        else:
-            print("❌ Erro ao buscar dados dos campos")
-    else:
-        print("⚠️ Nenhum campo válido selecionado")
-    
-    input("\nPressione Enter para continuar...")
-    return False
-
-def acao_valores_unicos(tabela):
-    """🏷️ Mostra valores únicos de campos"""
-    campos = schema_cache.get(tabela, [])
-    
-    print(f"🏷️ ESCOLHA UM CAMPO PARA VER VALORES ÚNICOS:")
-    for i, campo in enumerate(campos, 1):
-        print(f"  {i:2d}. {campo}")
-    
-    entrada = input("\nQual campo (número ou nome)? ").strip()
-    
-    campo_selecionado = None
-    if entrada.isdigit():
-        idx = int(entrada) - 1
-        if 0 <= idx < len(campos):
-            campo_selecionado = campos[idx]
-    else:
-        entrada_upper = entrada.upper()
-        for campo in campos:
-            if entrada_upper in campo.upper():
-                campo_selecionado = campo
-                break
-    
-    if campo_selecionado:
-        sql = f"SELECT DISTINCT FIRST 20 {campo_selecionado} FROM {tabela} WHERE {campo_selecionado} IS NOT NULL ORDER BY {campo_selecionado}"
-        
-        print(f"\n🏷️ Valores únicos em {campo_selecionado}:")
-        sucesso, rows = executar_sql(sql)
-        
-        if sucesso and rows:
-            for i, row in enumerate(rows, 1):
-                valor = row[0]
-                if isinstance(valor, str):
-                    valor = valor.strip()
-                print(f"  {i:2d}. {valor}")
-            
-            if len(rows) == 20:
-                print("     ... (mostrando apenas os primeiros 20)")
-            
-            # Opção de filtrar por um valor específico
-            print(f"\n💡 Filtrar {tabela} por um destes valores?")
-            escolha = input("Digite o número ou valor (Enter para voltar): ").strip()
-            
-            if escolha.isdigit():
-                idx = int(escolha) - 1
-                if 0 <= idx < len(rows):
-                    valor_filtro = rows[idx][0]
-                    sql_filtro = f"SELECT FIRST 10 * FROM {tabela} WHERE {campo_selecionado} = '{valor_filtro}'"
-                    print(f"\n🔍 Registros onde {campo_selecionado} = '{valor_filtro}':")
-                    executar_e_mostrar(sql_filtro)
-            elif escolha:
-                sql_filtro = f"SELECT FIRST 10 * FROM {tabela} WHERE UPPER({campo_selecionado}) LIKE '%{escolha.upper()}%'"
-                print(f"\n🔍 Registros com {campo_selecionado} contendo '{escolha}':")
-                executar_e_mostrar(sql_filtro)
-        else:
-            print("❌ Erro ao buscar valores únicos")
-    else:
-        print("⚠️ Campo não encontrado")
-    
-    input("\nPressione Enter para continuar...")
-    return False
-
-def acao_filtros_personalizados(tabela):
-    """🔍 Aplica filtros personalizados"""
-    campos = schema_cache.get(tabela, [])
-    
-    print(f"🔍 FILTROS PERSONALIZADOS PARA {tabela}")
-    print(f"Campos disponíveis: {', '.join(campos[:8])}{'...' if len(campos) > 8 else ''}")
-    
-    print(f"\n💡 Exemplos de filtros:")
-    print(f"  • cidade = 'São Paulo'")
-    print(f"  • nome LIKE '%Maria%'")
-    print(f"  • idade > 30")
-    print(f"  • data_cadastro >= '2023-01-01'")
-    
-    filtro = input(f"\nDigite o filtro WHERE (sem 'WHERE'): ").strip()
-    
-    if filtro:
-        sql = f"SELECT FIRST 15 * FROM {tabela} WHERE {filtro}"
-        print(f"\n🔍 SQL gerada: {sql}")
-        
-        sucesso, rows = executar_sql(sql)
-        if sucesso and rows:
-            print(f"\n📊 {len(rows)} registros encontrados:")
-            print_tabela_bonita(rows, 15)
-        elif sucesso:
-            print("✅ Filtro válido, mas nenhum registro encontrado")
-        else:
-            print("❌ Erro no filtro. Verifique a sintaxe.")
-    
-    input("\nPressione Enter para continuar...")
-    return False
-
-def acao_explorar_relacionamentos(tabela):
-    """🔗 Explora relacionamentos da tabela"""
-    relacionamentos = [fk for fk in foreign_keys if fk['from_table'] == tabela or fk['to_table'] == tabela]
-    
-    if not relacionamentos:
-        print(f"❌ Nenhum relacionamento encontrado para {tabela}")
-        input("Pressione Enter para continuar...")
-        return False
-    
-    print(f"🔗 RELACIONAMENTOS DE {tabela}:")
-    for i, fk in enumerate(relacionamentos, 1):
-        if fk['from_table'] == tabela:
-            print(f"  {i}. {tabela}.{fk['from_field']} → {fk['to_table']}.{fk['to_field']}")
-        else:
-            print(f"  {i}. {fk['from_table']}.{fk['from_field']} → {tabela}.{fk['to_field']}")
-    
-    escolha = input(f"\nQual relacionamento explorar (1-{len(relacionamentos)})? ").strip()
-    
-    if escolha.isdigit():
-        idx = int(escolha) - 1
-        if 0 <= idx < len(relacionamentos):
-            fk = relacionamentos[idx]
-            
-            # Gerar consulta com JOIN
-            if fk['from_table'] == tabela:
-                sql = f"""
-                SELECT FIRST 10 
-                    a.{fk['from_field']}, 
-                    b.*
-                FROM {fk['from_table']} a 
-                JOIN {fk['to_table']} b ON a.{fk['from_field']} = b.{fk['to_field']}
-                """
-                print(f"\n🔗 Dados de {tabela} com {fk['to_table']}:")
-            else:
-                sql = f"""
-                SELECT FIRST 10 
-                    a.{fk['from_field']}, 
-                    b.*
-                FROM {fk['from_table']} a 
-                JOIN {fk['to_table']} b ON a.{fk['from_field']} = b.{fk['to_field']}
-                """
-                print(f"\n🔗 Dados de {fk['from_table']} com {tabela}:")
-            
-            executar_e_mostrar(sql)
-    
-    input("\nPressione Enter para continuar...")
-    return False
-
-def executar_e_mostrar(sql):
-    """⚡ Executa SQL e mostra resultado"""
-    if conectado:
-        sucesso, rows = executar_sql(sql)
-        if sucesso and rows:
-            print_tabela_bonita(rows, 15)
-        elif sucesso:
-            print("✅ Consulta executada, mas sem resultados")
-        else:
-            print("❌ Erro na execução")
-    else:
-        print(f"📋 SQL gerada (execute manualmente): {sql}")
-
-def gerar_sugestoes_contextuais(sql: str, pergunta_original: str, resultados: list) -> List[str]:
-    """🧠 Gera sugestões baseadas na consulta atual"""
-    sugestoes = []
-    
-    # Detectar tabelas na SQL
-    tabelas_detectadas = []
-    sql_upper = sql.upper()
-    for tabela in schema_cache.keys():
-        if tabela in sql_upper:
-            tabelas_detectadas.append(tabela)
-    
-    # Sugestões baseadas nas tabelas encontradas
-    for tabela in tabelas_detectadas:
-        
-        # Sugestões básicas para a tabela
-        sugestoes.extend([
-            f"contar registros em {tabela.lower()}",
-            f"mostrar estrutura de {tabela.lower()}",
-            f"últimos registros de {tabela.lower()}",
-        ])
-        
-        # Sugestões de relacionamento
-        relacionadas = get_relacionamentos_tabela(tabela)
-        for rel in relacionadas[:2]:
-            sugestoes.extend([
-                f"relacionar {tabela.lower()} com {rel.lower()}",
-                f"dados completos de {tabela.lower()} e {rel.lower()}",
-            ])
-    
-    # Sugestões baseadas no tipo de consulta
-    if "COUNT" in sql_upper:
-        sugestoes.extend([
-            "mostrar os dados detalhados",
-            "listar alguns registros específicos",
-            "agrupar por categorias",
-        ])
-    elif "SELECT" in sql_upper and "WHERE" in sql_upper:
-        sugestoes.extend([
-            "remover filtros e ver tudo",
-            "adicionar mais filtros",
-            "ordenar de forma diferente",
-        ])
-    
-    # Sugestões baseadas no conteúdo da pergunta original
-    pergunta_lower = pergunta_original.lower()
-    
-    if "cliente" in pergunta_lower and "CLI_CLIENTE" in schema_cache:
-        sugestoes.extend([
-            "pedidos destes clientes",
-            "clientes de outras cidades",
-            "histórico de compras",
-            "dados de contato dos clientes",
-        ])
-    
-    if "cidade" in pergunta_lower:
-        sugestoes.extend([
-            "estados com mais registros",
-            "distribuição por região",
-            "comparar com outras cidades",
-        ])
-    
-    if "produto" in pergunta_lower:
-        sugestoes.extend([
-            "categorias de produtos",
-            "produtos mais vendidos",
-            "estoque disponível",
-        ])
-    
-    # Sugestões baseadas nos resultados
-    if resultados:
-        if len(resultados) > 10:
-            sugestoes.append("filtrar resultados")
-            sugestoes.append("ver apenas os primeiros")
-        elif len(resultados) < 5:
-            sugestoes.append("ampliar busca")
-            sugestoes.append("ver dados relacionados")
-    
-    # Sugestões analíticas gerais
-    sugestoes.extend([
-        "fazer análise estatística",
-        "agrupar por período",
-        "calcular totais e médias",
-        "comparar com outros dados",
-    ])
-    
-    # Remover duplicatas e limitar
-    sugestoes_unicas = []
-    for s in sugestoes:
-        if s not in sugestoes_unicas and s.lower() != pergunta_original.lower():
-            sugestoes_unicas.append(s)
-    
-    return sugestoes_unicas[:8]  # Máximo 8 sugestões contextuais
+        historico.append(f"Tabela: {t}")
+        res = explorar_tabela(t)
+        if res == "voltar":
+            return
+        # senão, volta para escolher outra tabela e continuar a navegação
 
 # =========================
 # 11. CHAT (MODO LIVRE MELHORADO)
